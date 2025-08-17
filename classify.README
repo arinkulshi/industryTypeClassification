@@ -1,0 +1,28 @@
+SEC Industry Sub-Type Resolver (README)
+
+This repo takes a list of companies (name + city + ZIP) and returns one industry sub-type per row — the SEC SIC description. It does this by resolving each row to a CIK, then pulling the company’s sic/sicDescription from SEC Submissions data. It prefers a local copy of Submissions (ZIP or extracted folder) to keep network usage near-zero.
+
+What you put in → what you get out
+
+Input CSV (your 50 companies)
+Must have columns for name, city, ZIP. Column names are flexible and auto-detected:
+
+preferred: normalized_name, city, zip
+
+also fine: Company Name, City, Zip Code, etc.
+
+Output CSV (per row)
+
+status — ok | ambiguous | not_found
+
+reason — short explanation (e.g., “exact ZIP and city match ≥ 0.6”, or “scores too close”)
+
+cik10 — 10-digit, zero-padded
+
+sic — 4-digit SIC
+
+sic_description — human label from SEC (“Electronic Computers”)
+
+industry_subtype — same as sic_description
+
+ambiguous_forced — true if we still returned the top candidate’s industry sub-type for an ambiguous case (your requested behavior)
