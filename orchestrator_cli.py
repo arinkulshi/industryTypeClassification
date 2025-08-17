@@ -18,18 +18,21 @@ def main():
     p.add_argument("--gap-accept", type=float, default=0.3)
     p.add_argument("--cache-dir", default="./sec_cache", help="Directory for SIC cache")
     p.add_argument("--audit", dest="audit_jsonl", default=None, help="Optional JSONL with ranked candidates and final decision per row")
+    # NEW: generic path (zip or dir). Keep --submissions-zip as alias for backward compat.
+    p.add_argument("--submissions-path", help="Path to SEC bulk submissions.zip OR directory containing CIK*.json")
+    p.add_argument("--submissions-zip", help="(Deprecated alias) Path to submissions.zip")
     p.add_argument("--no-force-ambiguous", action="store_true", help="If set, do NOT return industry_subtype for ambiguous rows")
-    p.add_argument("--submissions-zip", help="Path to SEC bulk submissions.zip (if provided, Submissions API is not called)")  # NEW
     args = p.parse_args()
 
-    store = SubmissionsStore(args.submissions_zip) if args.submissions_zip else None
+    submissions_path = args.submissions_path or args.submissions_zip
+    store = SubmissionsStore(submissions_path) if submissions_path else None
 
     orc = Orchestrator(
         user_agent=args.user_agent,
         names_json=args.names_json,
         cache_dir=args.cache_dir,
         force_ambiguous=not args.no_force_ambiguous,
-        submissions_store=store,   # pass through
+        submissions_store=store,   # works for zip or dir
     )
 
     rows = orc.run_csv(
@@ -48,17 +51,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-'''
-python orchestrator_cli.py \
-  --user-agent "YourOrg you@example.com" \
-  --names-json ./sec_cache/name_to_ciks.json \
-  --in companies_50.csv \
-  --out companies_with_industry.csv \
-  --submissions-zip ./sec_cache/submissions.zip \
-  --audit audit.jsonl
-
-
-
-'''
