@@ -1,50 +1,59 @@
-# orchestrator_cli.py
-import argparse
-from orchestrator import Orchestrator
-from submissions_store import SubmissionsStore
+# submissions_store.py
+from __future__ import annotations
+import json
+from pathlib import Path
+from typing import Optional
+from zipfile import ZipFile, BadZipFile, ZIP_DEFLATED
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--user-agent", required=True, help="Real UA with contact info")
-    p.add_argument("--names-json", required=True, help="Path to name_to_ciks.json (Chunk 2)")
-    p.add_argument("--in", dest="inp", required=True, help="Input CSV with ~50 companies")
-    p.add_argument("--out", required=True, help="Output CSV with industry_subtype added")
-    p.add_argument("--name-col", help="Column for company name (normalized or raw)")
-    p.add_argument("--city-col", help="Column for city")
-    p.add_argument("--zip-col", help="Column for zip/postal code")
-    p.add_argument("--threshold", type=float, default=0.85)
-    p.add_argument("--limit", type=int, default=10)
-    p.add_argument("--min-accept", type=float, default=1.6)
-    p.add_argument("--gap-accept", type=float, default=0.3)
-    p.add_argument("--cache-dir", default="./sec_cache", help="Directory for SIC cache")
-    p.add_argument("--audit", dest="audit_jsonl", default=None, help="Optional JSONL with ranked candidates and final decision per row")
-    p.add_argument("--no-force-ambiguous", action="store_true", help="If set, do NOT return industry_subtype for ambiguous rows")
-    p.add_argument("--submissions-zip", help="Path to SEC bulk submissions.zip (if provided, Submissions API is not called)")  # NEW
-    args = p.parse_args()
+class SubmissionsStore:
+    """
+    Lightweight reader for SEC bulk submissions.zip.
+    Expects paths like: submissions/CIK##########.json
+    Returns the parsed JSON dict, or None if not found.
+    """
+    def __init__(self, zip_path: str):
+        self.path = Path(zip_path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"submissions.zip not found at {self.path}")
+        # Lazy-open on first access to avoid holding handle if not needed
+        self._zip: Optional[ZipFile] = None
+        self._cache: dict[str, Optional[dict]] = {}  # memoize parsed JSON by CIK10
 
-    store = SubmissionsStore(args.submissions_zip) if args.submissions_zip else None
+    def _ensure_open(self):
+        if self._zip is None:
+            try:
+                self._zip = ZipFile(self.path, mode="r")
+            except BadZipFile as e:
+                raise RuntimeError(f"Invalid submissions.zip at {self.path}") from e
 
-    orc = Orchestrator(
-        user_agent=args.user_agent,
-        names_json=args.names_json,
-        cache_dir=args.cache_dir,
-        force_ambiguous=not args.no_force_ambiguous,
-        submissions_store=store,   # pass through
-    )
+    @staticmethod
+    def _cik10(cik: str | int) -> str:
+        return f"{int(str(cik).strip()):010d}"
 
-    rows = orc.run_csv(
-        csv_in=args.inp,
-        csv_out=args.out,
-        name_col=args.name_col,
-        city_col=args.city_col,
-        zip_col=args.zip_col,
-        threshold=args.threshold,
-        limit=args.limit,
-        min_accept=args.min_accept,
-        gap_accept=args.gap_accept,
-        write_audit_jsonl=args.audit_jsonl,
-    )
-    print(f"Wrote {args.out} with {len(rows)} rows")
+    def get(self, cik: str | int) -> Optional[dict]:
+        """
+        Return parsed submissions JSON for a CIK (10-digit, zero-padded).
+        If the file doesn't exist in the ZIP, returns None.
+        """
+        cik10 = self._cik10(cik)
+        if cik10 in self._cache:
+            return self._cache[cik10]
 
-if __name__ == "__main__":
-    main()
+        self._ensure_open()
+
+        # Primary expected location
+        possible = [
+            f"submissions/CIK{cik10}.json",
+            f"CIK{cik10}.json",  # fallback, in case some releases change paths
+        ]
+        data = None
+        for member in possible:
+            try:
+                with self._zip.open(member) as fp:
+                    data = json.loads(fp.read().decode("utf-8"))
+                    break
+            except KeyError:
+                continue
+
+        self._cache[cik10] = data
+        return data
